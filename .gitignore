@@ -1,0 +1,5 @@
+node_modules
+.alchemy
+dist
+.DS_Store
+*.log
