@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>alchemy-ws-repro — game</title>
+    <style>
+      body { font-family: monospace; padding: 1rem; background: #111; color: #ddd; }
+      button { padding: 0.5rem 1rem; cursor: pointer; }
+      pre { white-space: pre-wrap; background: #000; padding: 0.5rem; min-height: 6rem; }
+    </style>
+  </head>
+  <body>
+    <h2>WebSocket from <code>game.localhost</code> to <code>realm.localhost</code></h2>
+    <p>Page origin: <code id="origin"></code></p>
+    <button id="go">Open WebSocket</button>
+    <pre id="log"></pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

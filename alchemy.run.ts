@@ -11,6 +11,18 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const realm = yield* Realm;
-    return { realmUrl: realm.url };
+
+    // Vite-served SPA on a sibling subdomain. Mirrors kassandra's
+    // game.localhost setup. Browser will load this and try to open a
+    // WebSocket to realm.localhost.
+    const game = yield* Cloudflare.Vite('Game', {
+      rootDir: './game',
+      compatibility: { flags: ['nodejs_compat'] },
+      env: {
+        VITE_REALM_URL: realm.url,
+      },
+    });
+
+    return { realmUrl: realm.url, gameUrl: game.url };
   }),
 );

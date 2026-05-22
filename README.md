@@ -50,29 +50,32 @@ const ws = new WebSocket('ws://realm.localhost:1337/ws');
 // msg echo: ping  (after ws.send('ping'))
 ```
 
-### 3. WS from the browser fails
+### 3. WS from the browser fails — from a Vite-served sibling subdomain
 
-Open Chrome DevTools on any page (e.g. `about:blank`) and run:
-
-```js
-const ws = new WebSocket('ws://realm.localhost:1337/ws');
-ws.onopen = () => console.log('open');
-ws.onmessage = (e) => console.log('msg', e.data);
-ws.onclose = (e) => console.log('closed', e.code);
-ws.onerror = () => console.log('error');
-```
+Open `http://game.localhost:1337/` in Chrome and click **Open WebSocket**.
+The page is a minimal `Cloudflare.Vite` SPA that sits on a sibling subdomain
+of the Realm worker (matching the layout of a real app: SPA on one
+subdomain, WebSocket server on another, both served by `alchemy dev`).
 
 Observed:
 
 ```
-WebSocket connection to 'ws://realm.localhost:1337/ws' failed:
+connecting to ws://realm.localhost:1337/ws
 error
 closed 1006
 ```
 
 Network panel shows **0 request headers, 0 response headers** — the upgrade
-handshake never completes. (Confirmed in Chrome 141 on macOS; Bun WebSocket
-against the same server succeeds against the same URL at the same moment.)
+handshake never completes. (Confirmed in Chrome 141 on macOS; the same Bun
+WebSocket client succeeds against the same URL at the same moment.)
+
+The same failure reproduces from `about:blank`:
+
+```js
+const ws = new WebSocket('ws://realm.localhost:1337/ws');
+ws.onerror = () => console.log('error');
+ws.onclose = (e) => console.log('closed', e.code);
+```
 
 ## What the worker does
 
