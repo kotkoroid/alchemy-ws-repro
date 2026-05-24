@@ -1,9 +1,15 @@
 # alchemy-ws-repro
 
-Minimal reproduction for an `alchemy dev` (v2.0.0-beta.40) issue: **WebSocket
-upgrades to a `Cloudflare.Worker` from a browser fail with close code 1006
-and zero headers exchanged**, while plain HTTP works and terminal-side WS
-clients (curl, Bun's `WebSocket`) also work.
+Two related WebSocket-upgrade failures in `alchemy dev` (v2.0.0-beta.40+).
+Both involve `workerd` serving a Worker behind alchemy's local-subdomain dev
+infrastructure; both make HTTP fine and WS broken.
+
+| | Bug #1 | Bug #2 |
+|---|---|---|
+| **What fails** | Browser WS direct to `realm.localhost:1337/ws` | **Any** client's WS upgrade via `game.localhost:1337/realm/ws` (cross-subdomain forward through Vite's `/realm` proxy) |
+| **What works** | Curl WS, Bun WS, browser HTTP — to the same URL | Curl/Bun/browser HTTP through the same forward path |
+| **Client filter** | Browser-only (closes with code 1006, 0 headers) | Affects every client including curl |
+| **Smoking signal** | Network panel shows 0 request + 0 response headers | Connection closes before any response headers are produced |
 
 ## Setup
 
@@ -12,10 +18,16 @@ bun install
 bun run dev
 ```
 
-`alchemy dev` will route the `Realm` worker at `http://realm.localhost:1337`
+`alchemy dev` will spin up two workers + serve a Vite SPA:
+
+```
+realmUrl: http://realm.localhost:1337
+gameUrl:  http://game.localhost:1337
+```
+
 (falls back to `:1338+` if the port is busy — adjust the URLs below if so).
 
-## Repro
+## Bug #1 — Browser WS direct to a workerd subdomain fails
 
 ### 1. HTTP works
 
@@ -54,8 +66,7 @@ const ws = new WebSocket('ws://realm.localhost:1337/ws');
 
 Open `http://game.localhost:1337/` in Chrome and click **Open WebSocket**.
 The page is a minimal `Cloudflare.Vite` SPA that sits on a sibling subdomain
-of the Realm worker (matching the layout of a real app: SPA on one
-subdomain, WebSocket server on another, both served by `alchemy dev`).
+of the Realm worker.
 
 Observed:
 
@@ -77,20 +88,80 @@ ws.onerror = () => console.log('error');
 ws.onclose = (e) => console.log('closed', e.code);
 ```
 
+## Bug #2 — WS upgrade through Vite's `/realm` proxy fails (any client)
+
+The documented workaround for Bug #1 is "route the browser's WS through
+Vite's `/realm` proxy with `ws: true`". `game/vite.config.ts` configures
+this proxy. HTTP forwards through it cleanly; WS upgrades on the same URL
+get eaten. Reproducible from curl — no browser needed.
+
+### A. HTTP via the `/realm` Vite proxy works
+
+```sh
+curl -i http://game.localhost:1337/realm/ws
+# HTTP/1.1 426 Upgrade Required
+# Content-Type: text/plain
+# Vary: Origin
+#
+# Expected WebSocket upgrade
+```
+
+That 426 body is the realm worker's own response — proves the request
+reached the realm worker via `game.localhost:1337/realm/*` → Vite's proxy
+→ `realm.localhost:1337/*`.
+
+### B. WS upgrade direct to the realm subdomain works (control)
+
+```sh
+curl -is --max-time 2 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  http://realm.localhost:1337/ws
+# HTTP/1.1 101 Switching Protocols
+# Connection: Upgrade
+# Upgrade: websocket
+# Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+```
+
+### C. SAME WS upgrade through the Vite proxy hangs and closes
+
+```sh
+curl -is --max-time 2 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  http://game.localhost:1337/realm/ws
+# (empty — no response headers, connection closes before establishment)
+```
+
+Same URL as **A**, same target as **B**, only the `Upgrade` header
+discriminates. The forward is working for HTTP and the target accepts WS
+directly — the failure is specifically in how Vite's proxy (running inside
+the `alchemy dev` bundle) hands off the WS upgrade to workerd on a
+`*.localhost` subdomain.
+
+In the browser this manifests as `WebSocket is closed before the
+connection is established.` from the same `ws://game.localhost:1337/realm/ws`
+URL.
+
 ## What the worker does
 
 `src/Realm.ts` — routes `GET /ws` to the `PartyRoom` DO; otherwise 404.
 
 `src/PartyRoom.ts` — `Cloudflare.upgrade()` accepts the WS, greets, echoes.
 
-Mirrors a `Worker → DurableObject` shape, with the DO doing the upgrade.
+`game/vite.config.ts` — mounts `/realm` Vite proxy with `ws: true`
+forwarding to `realm.localhost:1337`. Used to demonstrate Bug #2; the
+browser-test page in Bug #1 connects directly to `realm.localhost:1337`
+and doesn't depend on the proxy.
 
 ## Hypothesis
 
-The cross-client behavior — terminal/Bun WS works, browser WS doesn't —
-points at something the browser sends that the terminal clients don't. Most
-likely **`Sec-WebSocket-Extensions: permessage-deflate; …`** or a particular
-`Sec-WebSocket-Protocol` header.
+**Bug #1**: the cross-client behavior — terminal/Bun WS works, browser WS
+doesn't — points at something the browser sends that terminal clients
+don't. Most likely **`Sec-WebSocket-Extensions: permessage-deflate; …`**
+or a particular `Sec-WebSocket-Protocol` header.
 
 Code path:
 
@@ -101,10 +172,21 @@ Code path:
 - HTTP and minimal-header WS upgrades survive that hop fine.
 - Browser upgrades (with permessage-deflate) appear not to.
 
+**Bug #2**: Vite's `server.proxy` with `ws: true` is implemented over
+`http-proxy` (node-side). The proxy survives HTTP cross-subdomain just
+fine, but on a WS upgrade `Connection: Upgrade` flowing through
+`alchemy dev`'s wrapper to `realm.localhost:1337` doesn't complete the
+handshake — the response side never produces headers and the connection
+closes. Reproducible without a browser, so this is purely a Node-side
+proxy ↔ workerd-subdomain interaction.
+
 ## Expected
 
-Browser `new WebSocket('ws://realm.localhost:1337/ws')` should connect and
-log `hello from PartyRoom` like the Bun client does.
+- **Bug #1**: Browser `new WebSocket('ws://realm.localhost:1337/ws')` should
+  connect and log `hello from PartyRoom` like the Bun client does.
+- **Bug #2**: Curl/Bun WS via `ws://game.localhost:1337/realm/ws` should
+  return `101 Switching Protocols` and the WS frames from the realm
+  worker, just as direct `ws://realm.localhost:1337/ws` does.
 
 ## Versions
 
