@@ -212,6 +212,7 @@ alchemy under Node 26 makes it go away.
 
 - `alchemy` preview `c1ec6ca` (= `2.0.0-beta.44` with PR #458)
 - `effect@4.0.0-beta.66`
+- `vite@8.0.13` (matches alchemy's `^8.0.7` peer range; mirrors kassandra)
 - `workerd@1.20260417.1`
 - Bun 1.3.14, Node 26.0.0 (host candidates)
 - Chrome 141 / Brave on macOS arm64
