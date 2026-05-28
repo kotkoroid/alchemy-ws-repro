@@ -224,5 +224,28 @@ equivalent), with `./repro.sh` for #2 and the browser page for #1.
 
 | Host runtime | Bug #1 (browser direct) | Bug #2 (Vite `/realm` proxy, curl) | Notes |
 |---|---|---|---|
-| Bun 1.3.14 | ☐ | ☐ | what kassandra ships today |
+| Bun 1.3.14 | ☐ | **FAIL** (2026-05-28) | `./repro.sh` C: silent close, A returns 426, B returns 101 |
 | Node 26.0.0 | ☐ | ☐ | requires PR #458 to start at all |
+
+Bun-host result detail (2026-05-28, alchemy `c1ec6ca` / `2.0.0-beta.44`,
+Bun 1.3.14, macOS arm64):
+
+```
+A. HTTP forward via Vite /realm proxy (game.localhost → realm)
+   HTTP/1.1 426 Upgrade Required
+   Expected WebSocket upgrade
+
+B. WS upgrade DIRECT to realm.localhost (control)
+   HTTP/1.1 101 Switching Protocols
+   Connection: Upgrade
+   Upgrade: websocket
+   Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+
+C. WS upgrade VIA Vite /realm proxy (the bug)
+   (silent close — no response headers)
+```
+
+Only the `Upgrade: websocket` request header discriminates between A
+(works) and C (silent close), with identical upstream resolution to
+B (works). The failure is specifically in how Vite's `http-proxy`
+under Bun hands off the upgrade.
