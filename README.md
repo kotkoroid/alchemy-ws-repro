@@ -1,7 +1,7 @@
 # alchemy-ws-repro
 
-Two related WebSocket-upgrade failures in `alchemy dev` (v2.0.0-beta.40+).
-Both involve `workerd` serving a Worker behind alchemy's local-subdomain dev
+Two related WebSocket-upgrade failures in `alchemy dev`. Both involve
+`workerd` serving a Worker behind alchemy's local-subdomain dev
 infrastructure; both make HTTP fine and WS broken.
 
 | | Bug #1 | Bug #2 |
@@ -10,6 +10,25 @@ infrastructure; both make HTTP fine and WS broken.
 | **What works** | Curl WS, Bun WS, browser HTTP — to the same URL | Curl/Bun/browser HTTP through the same forward path |
 | **Client filter** | Browser-only (closes with code 1006, 0 headers) | Affects every client including curl |
 | **Smoking signal** | Network panel shows 0 request + 0 response headers | Connection closes before any response headers are produced |
+| **Status (2026-05-28)** | **Open.** Reproduces against alchemy `c1ec6ca` / `2.0.0-beta.44` under Bun 1.3.14 | **Open under Bun** (upstream Bun, see below). Per maintainer, goes away if alchemy is run under Node 26 |
+
+## Status after maintainer triage (May 2026)
+
+- **Bug #2** classified by the alchemy maintainer as **upstream Bun**:
+  Vite's bundled `http-proxy` running on Bun mishandles WS upgrades.
+  Tracker: [oven-sh/bun#28396](https://github.com/oven-sh/bun/issues/28396).
+  *"Nothing we can do about it in Bun … recurring issue for months."*
+  Workaround on the alchemy side: run alchemy under Node 26+ (Vite then
+  uses Node's `http-proxy`, which works).
+- **Node 26 startup blocker** for that workaround fixed in
+  [alchemy-run/alchemy-effect#458](https://github.com/alchemy-run/alchemy-effect/pull/458)
+  (disables `--experimental-transform-types`, which Node 26 removed).
+  Shipped in the `c1ec6ca` preview branch / `2.0.0-beta.44`. *This is the
+  only fix shipped so far for either bug — it doesn't fix the bugs
+  themselves, it makes the "run under Node 26" workaround feasible.*
+- **Bug #1** still open. Maintainer couldn't reproduce on their machine
+  from a regular `localhost` page; this repo's expanded repro
+  (Vite-served sibling subdomain) is the canonical reproduction.
 
 ## Setup
 
@@ -173,12 +192,13 @@ Code path:
 - Browser upgrades (with permessage-deflate) appear not to.
 
 **Bug #2**: Vite's `server.proxy` with `ws: true` is implemented over
-`http-proxy` (node-side). The proxy survives HTTP cross-subdomain just
-fine, but on a WS upgrade `Connection: Upgrade` flowing through
-`alchemy dev`'s wrapper to `realm.localhost:1337` doesn't complete the
-handshake — the response side never produces headers and the connection
-closes. Reproducible without a browser, so this is purely a Node-side
-proxy ↔ workerd-subdomain interaction.
+`http-proxy` (Node-side). Under Bun, `http-proxy`'s WS upgrade path
+trips on Bun's `net.Socket` (e.g. missing `destroySoon`, plus deeper
+upstream-Bun issues tracked in [oven-sh/bun#28396](https://github.com/oven-sh/bun/issues/28396)).
+The handshake response side never produces headers and the connection
+closes. Reproducible without a browser. Per the alchemy maintainer,
+this manifestation is purely a Bun ↔ `http-proxy` interaction — running
+alchemy under Node 26 makes it go away.
 
 ## Expected
 
@@ -190,7 +210,19 @@ proxy ↔ workerd-subdomain interaction.
 
 ## Versions
 
-- `alchemy@2.0.0-beta.40`
+- `alchemy` preview `c1ec6ca` (= `2.0.0-beta.44` with PR #458)
 - `effect@4.0.0-beta.66`
 - `workerd@1.20260417.1`
-- Chrome 141 on macOS arm64
+- Bun 1.3.14, Node 26.0.0 (host candidates)
+- Chrome 141 / Brave on macOS arm64
+
+## Retest matrix
+
+This is what the maintainer asked us to verify on the preview branch.
+Each row is one full pass after `bun install && bun run dev` (or `node`
+equivalent), with `./repro.sh` for #2 and the browser page for #1.
+
+| Host runtime | Bug #1 (browser direct) | Bug #2 (Vite `/realm` proxy, curl) | Notes |
+|---|---|---|---|
+| Bun 1.3.14 | ☐ | ☐ | what kassandra ships today |
+| Node 26.0.0 | ☐ | ☐ | requires PR #458 to start at all |
