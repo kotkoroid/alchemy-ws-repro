@@ -10,7 +10,7 @@ infrastructure; both make HTTP fine and WS broken.
 | **What works** | Curl WS, Bun WS, browser HTTP — to the same URL | Curl/Bun/browser HTTP through the same forward path |
 | **Client filter** | Browser-only (closes with code 1006, 0 headers) | Affects every client including curl |
 | **Smoking signal** | Network panel shows 0 request + 0 response headers | Connection closes before any response headers are produced |
-| **Status (2026-05-28)** | **Open.** Reproduces against alchemy `c1ec6ca` / `2.0.0-beta.44` under Bun 1.3.14 | **Open under Bun** (upstream Bun, see below). Per maintainer, goes away if alchemy is run under Node 26 |
+| **Status (2026-05-28)** | **Fixed** on alchemy `c1ec6ca` / `2.0.0-beta.44`. Was open on `beta-40` | **Open under Bun** (upstream Bun, see below). Per maintainer, goes away if alchemy is run under Node 26 |
 
 ## Status after maintainer triage (May 2026)
 
@@ -225,8 +225,26 @@ equivalent), with `./repro.sh` for #2 and the browser page for #1.
 
 | Host runtime | Bug #1 (browser direct) | Bug #2 (Vite `/realm` proxy, curl) | Notes |
 |---|---|---|---|
-| Bun 1.3.14 | ☐ | **FAIL** (2026-05-28) | `./repro.sh` C: silent close, A returns 426, B returns 101 |
+| Bun 1.3.14 | **PASS** (2026-05-28) | **FAIL** (2026-05-28) | bug #1 fixed between beta-40 and c1ec6ca; bug #2 still upstream-Bun |
 | Node 26.0.0 | ☐ | ☐ | requires PR #458 to start at all |
+
+Bug #1 retest detail (2026-05-28, browser):
+
+Brave with Shields down, `http://game.localhost:1337/` → click **Open
+WebSocket**. The page log reports:
+
+```
+connecting to ws://realm.localhost:1337/ws
+open
+msg hello from PartyRoom
+msg echo: ping
+```
+
+The 1006/no-headers behavior from May 21–24 against beta-40 is gone.
+John was still *"figuring out #1"* at last update, so the fix was
+either incidental to other changes in beta-41–44, or a workerd-side
+update bundled along — either way, the canonical Bug #1 scenario now
+passes.
 
 Bun-host result detail (2026-05-28, alchemy `c1ec6ca` / `2.0.0-beta.44`,
 Bun 1.3.14, macOS arm64):
